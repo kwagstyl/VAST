@@ -1,5 +1,5 @@
 import numpy as np
-import io_mesh
+from vast import io_mesh
 from scipy.stats import mode
 from vast.constants import civet_path
 import os
@@ -115,18 +115,50 @@ def tidy_combined_atlas(combined_areas,overlaps,neighbours,threshold=100):
         island_of_interest=all_areas_islands==island_index[ordered_index]
         island_value=combined_areas[island_of_interest][0]
         #only replace islands of 0s or overlaps
-        if np.logical_and(counts[ordered_index]<threshold, island_value==0 or (overlaps[island_of_interest]).any()):
-        
-            neighbours_island=neighbours[island_of_interest]
-            long=[]
-            for n in neighbours_island:
-                long.extend(n)
-            unique_neighbours=np.setdiff1d(np.unique(long),vertex_indices[island_of_interest])
-            new_combined_areas[island_of_interest]=mode(new_combined_areas[unique_neighbours])[0][0]
+        if np.logical_and(counts[ordered_index]<threshold, island_value==0 or (overlaps[island_of_interest]).any()):        
+            neighbours_island = get_ring_of_neighbours(island_of_interest, neighbours, vertex_indices, ordered=False)
+            new_combined_areas[island_of_interest]=mode(new_combined_areas[neighbours_island])[0][0]
     return new_combined_areas
 
 
+def get_ring_of_neighbours(island, neighbours, vertex_indices=None, ordered=False):
+    """Calculate ring of neighbouring vertices for an island of cortex
+    If ordered, then vertices will be returned in connected order"""
+    if not vertex_indices:
+        vertex_indices=np.arange(len(island))
+    if not ordered:
 
+        neighbours_island = neighbours[island]
+        unfiltered_neighbours = []
+        for n in neighbours_island:
+            unfiltered_neighbours.extend(n)
+        unique_neighbours = np.setdiff1d(np.unique(unfiltered_neighbours), vertex_indices[island])
+        return unique_neighbours
+            
+def get_neighbouring_roi(area, neighbours,mask=None):
+    """generate region of interest of same size as area from neighbouring vertices
+    currently no buffer zone or mask is included."""
+    roi=area.astype(bool)
+    mask=mask.astype(bool)
+    n_vert_in_roi = np.sum(roi)
+    neighbouring_roi=[0]
+    while len(neighbouring_roi) < n_vert_in_roi:
+        ring_vertices = get_ring_of_neighbours(roi, neighbours)
+        #extend region of interest to get next neighbours in subsequent loop
+        roi[ring_vertices] = True
+        #store ring vertices
+        neighbouring_roi.extend(ring_vertices)
+        #mask vertices that you want to exclude eg medial wall. 
+        if mask is not None:
+            neighbouring_roi=np.array(neighbouring_roi)
+            
+            neighbouring_roi=neighbouring_roi[~mask[neighbouring_roi]].tolist()
+            
+    #shrink to correct length, equal to original roi
+    neighbouring_roi = neighbouring_roi[:n_vert_in_roi]
+    bool_roi = np.zeros_like(roi)
+    bool_roi[neighbouring_roi]= True
+    return bool_roi
 
 
 def load_printed_intensities(intensity_file):
