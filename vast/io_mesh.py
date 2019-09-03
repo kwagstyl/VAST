@@ -1,6 +1,6 @@
 import nibabel as nb
 import numpy as np
-
+import vast.surface_tools as st
 
 # function to load mesh geometry
 def load_mesh_geometry(surf_mesh):
@@ -271,7 +271,7 @@ def write_gifti(surf_mesh, coords, faces):
 def save_obj(surf_mesh,coords,faces):
 #write out MNI - obj format
     n_vert=len(coords)
-    norms=normal_vectors(coords,faces).tolist()
+    norms=st.normal_vectors(coords,faces).tolist()
     XYZ=coords.tolist()
     Tri=faces.tolist()
     with open(surf_mesh,'w') as s:
@@ -422,22 +422,3 @@ def write_ply(filename, vertices, faces, comment=None):
     with open(filename, 'a') as f:
         faces_df.to_csv(f, header=False, index=False,
                         float_format='%.0f', sep=' ')
-
-
-def normalize_v3(arr):
-    ''' Normalize a numpy array of 3 component vectors shape=(n,3) '''
-    lens = np.sqrt( arr[:,0]**2 + arr[:,1]**2 + arr[:,2]**2 )
-    arr[:,0] /= lens
-    arr[:,1] /= lens
-    arr[:,2] /= lens                
-    return arr
-
-def normal_vectors(vertices,faces):
-    norm = np.zeros( vertices.shape, dtype=vertices.dtype )
-    tris = vertices[faces]
-    n = np.cross( tris[::,1 ] - tris[::,0]  , tris[::,2 ] - tris[::,0] )
-    n=normalize_v3(n)
-    norm[ faces[:,0] ] += n
-    norm[ faces[:,1] ] += n
-    norm[ faces[:,2] ] += n
-    return normalize_v3(norm)
