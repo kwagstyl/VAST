@@ -338,10 +338,3 @@ def ordered_new_neighbours(patch, neighbourhood):
 
 
 
-
-
-
-
-
-
-
