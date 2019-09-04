@@ -332,9 +332,3 @@ def ordered_new_neighbours(patch, neighbourhood):
         else :
             if n in patch:
                 switch1=True
-
-
-
-
-
-

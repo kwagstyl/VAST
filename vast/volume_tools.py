@@ -60,6 +60,14 @@ def generate_block_for_area(hdf5_filenames, output_dir, area_label, area_index, 
     out_vol.writeFile()    
     return
 
+def save_mnc_block(block,block_filename,origin,resolution,dtype="byte", dimnames=("xspace", "yspace", "zspace")):
+    """save block to volumetric filename with correct resolution etc
+        currently only supports minc, could be extended"""
+    
+    out_vol = pyminc.volumeFromData(block_filename, block, dimnames=dimnames, starts=tuple(origin), steps=resolution, volumeType=dtype)
+    out_vol.writeFile()    
+    return
+
 def calculate_bounding_box(hdf5_filenames,area_index,margin=20, scale=5):
     """ calculate bounding box for a given label.
     returns empty box, limits in x/y dimensions and sections to be imported.
