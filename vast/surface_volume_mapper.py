@@ -4,11 +4,15 @@ import numpy as np
 import h5py
 import vast.volume_tools as vt
 import vast.surface_tools as st
+from functools import partial
+import concurrent.futures
+import os
 
+import time
 class SurfaceVolumeMapper(object):
     
     def __init__(self, white_surf=None, gray_surf=None, resolution=None, mask=None, dimensions=None,
-                  origin=None, filename=None ):
+                  origin=None, filename=None, save_in_absence=False ):
         """Class for mapping surface data to voxels
         Always assumes axis order is xyz
         Args:
@@ -32,8 +36,34 @@ class SurfaceVolumeMapper(object):
                                dimensions and origin.
         
         """
+        #initialise block coordinates dictionary
+        self.volume_surf_coordinates={'voxel_coordinates':[],
+                               'triangles':[],
+                                'depths':[],
+                               'triangle_coordinates':[]}
+        
+        if filename is not None:
+            if os.path.isfile(filename):
+                print('loading precomputed coordinates from {}'.format(filename))
+                self.load_precomputed_coordinates(filename)
+                print('loaded header info:')
+                print('resolution: {}'.format(self.resolution))
+                print('dimensions: {}'.format(self.dimensions))
+                print('origin: {}'.format(self.origin))
+                print('We hope this file matches your expectations')
+                return
+            else:
+                print('precomputed coordinates file not found, recomputing...')
         
         #check resolution is 1D or 3D
+        if resolution is not None:
+            if isinstance(resolution, float):
+                self.resolution = np.array([resolution,resolution,resolution])
+            elif len(resolution)==3:
+                self.resolution = resolution
+            else:
+                NotImplementedError
+                
         print('loading surface meshes')
         if white_surf is not None:
             self.white_surface = io.load_mesh_geometry(white_surf)
@@ -41,44 +71,53 @@ class SurfaceVolumeMapper(object):
         if gray_surf is not None:
             self.gray_surface = io.load_mesh_geometry(gray_surf)
         
-        if resolution is not None:
-            if len(resolution)==3:
-                self.resolution = resolution
-            elif len(resolution) == 1:
-                self.resolution = [resolution,resolution,resolution]
-            else:
-                NotImplementedError
+        
         
         #check if mask. Calculate dimensions and origins from mask, unless these are specified.
         print('masking triangles')
         if mask is not None:
             self.mask=mask
             self.triangles_to_include = self.surface_mask_triangles(self.mask)
-            if dimensions is None or origin is None:
+            if type(dimensions) is not np.ndarray or type(origin) is not np.ndarray:
+                
                 block_box = SurfaceVolumeMapper.bounding_box(np.vstack((self.gray_surface['coords'][mask],
                                                                         self.white_surface['coords'][mask])))
                 self.dimensions = np.ceil((block_box[1]-block_box[0])/self.resolution).astype(int)
                 self.origin = block_box[0]
                 
             else:
-                self.dimensions = dimensions
-                self.origin = origin
+                self.dimensions = np.array(dimensions)
+                self.origin = np.array(origin)
         # if no mask, use block to filter triangles down
         else:
-            self.dimensions = dimensions
-            self.origin = origin
-            self.triangles_to_include = self.volume_mask_triangles(self.triangles_to_include)
+            self.dimensions = np.array(dimensions)
+            self.origin = np.array(origin)
+
         
-        #initialise block coordinates dictionary
+        self.triangles_to_include = self.volume_mask_triangles(self.triangles_to_include)
+        
+        
+        #main function
+        print('calculating coordinates')
+        
+        t1=time.time()
+       # self.calculate_volume_surf_coordinates()
+        t2=time.time()
         self.volume_surf_coordinates={'voxel_coordinates':[],
                                'triangles':[],
                                 'depths':[],
                                'triangle_coordinates':[]}
+       # print('non-parallel tool: ',t2-t1)
+        t2=time.time()
+        self.calculate_volume_surf_coordinates_parallel()
+        t3=time.time()
+        print('parallel tool: ',t3-t2)
+        #save file if filename was give, file did not exist and save_in_absence is True
+        if filename is not None and save_in_absence:
+            print('saving out coordinates to {}'.format(filename))
+            self.save_coordinates(filename)
         
-        #main function
-        print('calculating coordinates')
-        self.calculate_volume_surf_coordinates()
-        
+    #functions
 
     def save_coordinates(self, filename):
         """save coordinates as hdf5 file
@@ -89,11 +128,22 @@ class SurfaceVolumeMapper(object):
         f.attrs['dimensions'] = self.dimensions
         coords_files=['voxel_coordinates','triangles', 'depths','triangle_coordinates']
         for coords_file in coords_files:
-            dset = f.require_dataset( 'voxel_coordinates' ,
+            dset = f.require_dataset( coords_file ,
                                  shape = self.volume_surf_coordinates[coords_file].shape ,
-                                 dtype = type(self.volume_surf_coordinates[coords_file]),
+                                 dtype = self.volume_surf_coordinates[coords_file].dtype,
                                  compression = "gzip", compression_opts = 9)
             dset[:] = self.volume_surf_coordinates[coords_file]
+        f.close()
+        
+    def load_precomputed_coordinates(self, filename):
+        """load coordinates from hdf5 file"""
+        f=h5py.File(filename, 'r')
+        self.resolution = f.attrs['resolution'] 
+        self.origin = f.attrs['origin'] 
+        self.dimensions = f.attrs['dimensions'] 
+        coords_files=['voxel_coordinates','triangles', 'depths','triangle_coordinates']
+        for coords_file in coords_files:
+            self.volume_surf_coordinates[coords_file] = f[coords_file][:]
         f.close()
         
     def map_vector_to_block(self, vector_file, interpolation='linear'):
@@ -101,9 +151,9 @@ class SurfaceVolumeMapper(object):
         interpolation between vertices can either be:
         nearest neighbour or trilinear (weighted by barycentric)"""
         block = np.zeros(self.dimensions)
-        tri_coords = np.array(self.volume_surf_coordinates['triangle_coordinates'])
-        triangles=np.array(self.volume_surf_coordinates['triangles'])
-        vc=np.array(self.volume_surf_coordinates['voxel_coordinates'])
+        tri_coords = self.volume_surf_coordinates['triangle_coordinates']
+        triangles=self.volume_surf_coordinates['triangles']
+        vc=self.volume_surf_coordinates['voxel_coordinates']
         if interpolation == 'linear':
             # interpolation
             block[vc[:,0],vc[:,1],vc[:,2]] = np.einsum('ij,ij->i', tri_coords, vector_file[triangles])
@@ -118,15 +168,12 @@ class SurfaceVolumeMapper(object):
         interpolation between vertices can either be:
         nearest neighbour or trilinear (weighted by barycentric)"""
         block = np.zeros(self.dimensions)
-        tri_coords = np.array(self.volume_surf_coordinates['triangle_coordinates'])
-        triangles=np.array(self.volume_surf_coordinates['triangles'])
-        vc=np.array(self.volume_surf_coordinates['voxel_coordinates'])
-        depths=np.round((profiles.shape[1]-1)*np.array(self.volume_surf_coordinates['depths'])).astype(int)
-        triangle_values=np.zeros((len(depths),3))
+        tri_coords = self.volume_surf_coordinates['triangle_coordinates']
+        triangles=self.volume_surf_coordinates['triangles']
+        vc=self.volume_surf_coordinates['voxel_coordinates']
+        depths=np.round((profiles.shape[1]-1)*self.volume_surf_coordinates['depths']).astype(int)
         print('reading depths')
-        for k,d in enumerate(depths):
-            profiles_triangle=profiles[triangles[k]]
-            triangle_values[k,:]=profiles_triangle[:,d]
+        triangle_values=np.array([profiles[triangles[:,0],depths[:]],profiles[triangles[:,1],depths[:]],profiles[triangles[:,2],depths[:]]]).T
         print('writing to block')
         if interpolation == 'linear':
             block[vc[:,0],vc[:,1],vc[:,2]] = np.einsum('ij,ij->i', tri_coords, triangle_values)
@@ -136,9 +183,9 @@ class SurfaceVolumeMapper(object):
             block[vc[:,0],vc[:,1],vc[:,2]] = profiles[nearest_index,depths]    
         return block
     
-    def save_block(self, filename,block, dtype="uint"):
+    def save_block(self, filename,block, dtype="ubyte"):
         """calls save block from volume tools"""
-        vt.save_mnc_block(block, filename,
+        vt.save_mnc_block(filename, block,
                           origin=self.origin, resolution=self.resolution,
                          dtype=dtype)
         return
@@ -154,22 +201,32 @@ class SurfaceVolumeMapper(object):
     def volume_mask_triangles(self, triangles_to_include):
             """return triangles with all vertices in block only"""
             vertex_indices = np.unique(triangles_to_include)
+#           TODO this doesnt work for 2D because neither triangle is in the slice unless perfectly perpendicular
+            #add a margin for edge cases. 4 mm in any direction            
+            margin = 4.0
             max_dimension = self.origin + self.dimensions * self.resolution
+            origin_expanded = self.origin - np.array([margin,margin,margin])
+            max_dimension_expanded = max_dimension + np.array([margin,margin,margin])
             #check if vertices inside block
-            g_include=np.logical_and(np.all(gray_surface['coords'][vertex_indices] > self.origin,axis=0),
-                           np.all(gray_surface['coords'][vertex_indices] < max_dimension,axis=0))
-            w_include=np.logical_and(np.all(white_surface['coords'][vertex_indices] > self.origin,axis=0),
-                           np.all(white_surface['coords'][vertex_indices] < max_dimension,axis=0))
+            g_include=np.logical_and(np.all(self.gray_surface['coords'][vertex_indices] > origin_expanded,axis=1),
+                           np.all(self.gray_surface['coords'][vertex_indices] < max_dimension_expanded,axis=1))
+            w_include=np.logical_and(np.all(self.white_surface['coords'][vertex_indices] > origin_expanded,axis=1),
+                           np.all(self.white_surface['coords'][vertex_indices] < max_dimension_expanded,axis=1))
             #include if either grey or white is inside
-            surface_mask = vertex_indices[np.logical_or(g_include,w_include)]
+            surface_mask_indices = vertex_indices[np.logical_or(g_include,w_include)]
+            surface_mask=np.zeros(len(self.gray_surface['coords'])).astype(bool)
+            surface_mask[surface_mask_indices] = True
             #mask triangles
-            return surface_mask_triangles(vertices_to_include)
+            return self.surface_mask_triangles(surface_mask)
         
     def calculate_volume_surf_coordinates(self):
-        """calculate depths and barys for all triangles in volume 
+        """calculate cortical depths and barycentric coordinates for voxels and triangles in volume 
         and store in data dictionary"""
-        for triangle in self.triangles_to_include:
-            prism=self.generate_prism(triangle)
+        print('{} triangles included'.format(len(self.triangles_to_include)))
+        for k,triangle in enumerate(self.triangles_to_include):
+            if k % 10000 ==0:
+                print('{}% done'.format(100*k/len(self.triangles_to_include)))
+            prism=self.generate_prism(self.gray_surface['coords'],self.white_surface['coords'],triangle)
             bbox = SurfaceVolumeMapper.prism_bounding_box(prism)
             world_coords, voxel_coords= SurfaceVolumeMapper.voxel_world_coords_in_box(bbox,self.origin, self.resolution, self.dimensions)
             wc, vc, depths, tri_coords=SurfaceVolumeMapper.get_depth_and_barycentric_coordinates_for_prism(world_coords,voxel_coords,prism)
@@ -180,15 +237,86 @@ class SurfaceVolumeMapper(object):
                 self.volume_surf_coordinates['triangle_coordinates'].extend(tri_coords.tolist())
         lv=len(self.volume_surf_coordinates['voxel_coordinates'])
         ld=len(self.volume_surf_coordinates['depths'])
+        for key in self.volume_surf_coordinates.keys():
+            self.volume_surf_coordinates[key] = np.array(self.volume_surf_coordinates[key])
         assert lv==ld,'lengths dont match depths={}voxel_coords{}'.format(ld,lv)
         return
+    
+    def calculate_volume_surf_coordinates_parallel(self):
+        """calculate depths and barycentric coordinates for voxels and triangles in volume
+        in parallel"""
+        num_process=3
+        volume_surf_coordinates={'voxel_coordinates':[],
+                               'triangles':[],
+                                'depths':[],
+                               'triangle_coordinates':[]}
+        
+        subsets = np.array_split(np.arange(len(self.triangles_to_include)),num_process)
+        func = partial(SurfaceVolumeMapper.calculate_volume_surf_coordinates_one_prism,
+                       self.gray_surface['coords'],self.white_surface['coords'],
+                       self.triangles_to_include,
+                       self.origin, self.resolution, self.dimensions, subsets)
+        t1=time.time()
+        #Threading doesn't work here but process pool does.
+        with concurrent.futures.ProcessPoolExecutor(num_process) as pool:
+            store = list(pool.map(func,range(len(subsets))))
+        for pool_output in store:
+            for key in self.volume_surf_coordinates.keys():
+                self.volume_surf_coordinates[key].extend(pool_output[key])
+        for key in self.volume_surf_coordinates.keys():
+            self.volume_surf_coordinates[key] = np.array(self.volume_surf_coordinates[key])
+        t2=time.time()
+        print('function time: ',t2-t1)
+        #for key in volume_surf_coordinates.keys():
+        #    volume_surf_coordinates[key] = [x for x in volume_surf_coordinates[key] if x]
+        #    self.volume_surf_coordinates2[key]=np.array([item for sublist in volume_surf_coordinates[key] for item in sublist])
+        #t3=time.time()
+        #print('sorting time: ',t3-t2)
+        return
+
             
-    def generate_prism(self,triangle):
+    @staticmethod        
+    def calculate_volume_surf_coordinates_one_prism(
+        gray_surface_coords,white_surface_coords,
+        triangles,
+        origin, resolution, dimensions, subset_triangles,k):
+        """calculate on subset of triangles"""
+        store_surf_coordinates={'voxel_coordinates':[],
+                               'triangles':[],
+                                'depths':[],
+                               'triangle_coordinates':[]}
+        percentage_divider=np.round(len(subset_triangles[k])/10).astype(int)
+        for counter,tri_index in enumerate(subset_triangles[k]):
+            if counter % percentage_divider ==0:
+                print('Process {} is {}% done'.format(k,np.round(100*counter/len(subset_triangles[k]))))
+            prism = SurfaceVolumeMapper.generate_prism(gray_surface_coords, white_surface_coords, triangles[tri_index])
+            bbox = SurfaceVolumeMapper.prism_bounding_box(prism)
+            world_coords, voxel_coords= SurfaceVolumeMapper.voxel_world_coords_in_box(bbox,origin, resolution, dimensions)
+            wc, vc, depths, tri_coords=SurfaceVolumeMapper.get_depth_and_barycentric_coordinates_for_prism(world_coords,voxel_coords,prism)
+            #if some coordinates are returned, then store these
+            if len(vc)>0:
+                store_surf_coordinates['voxel_coordinates'].extend(vc.tolist())
+                store_surf_coordinates['depths'].extend(depths.tolist())
+                store_surf_coordinates['triangles'].extend(np.tile(triangles[tri_index],(len(depths),1)).tolist())
+                store_surf_coordinates['triangle_coordinates'].extend(tri_coords.tolist())
+        return store_surf_coordinates
+        
+            
+    @staticmethod
+    def generate_prism(gray_surface_coords,white_surface_coords,triangle):
         """return coordinates for prism in a dictionary
         with two triangles
         ordering is g1,g2,g3 - w1,w2,w3"""
-        prism_coordinates={'g_triangle':self.gray_surface['coords'][triangle],'w_triangle':self.white_surface['coords'][triangle]}
+        prism_coordinates={'g_triangle':gray_surface_coords[triangle],'w_triangle':white_surface_coords[triangle]}
         return prism_coordinates
+    
+    
+   # def generate_prism(self,triangle):
+   #     """return coordinates for prism in a dictionary
+   #     with two triangles
+   #     ordering is g1,g2,g3 - w1,w2,w3"""
+   #     prism_coordinates={'g_triangle':self.gray_surface['coords'][triangle],'w_triangle':self.white_surface['coords'][triangle]}
+   #     return prism_coordinates
     
     
     @staticmethod
@@ -256,22 +384,36 @@ class SurfaceVolumeMapper(object):
 
         g3 = prism['g_triangle'][2]
         v3 = connecting_vectors[2]
-
+        g3_voxel_coords = g3-voxel_coords
+        
+        
+        #precalculate fixed parts
         k3 = np.dot(cross_product_connecting_vectors,v3)
+        k2_fixed=np.dot(v3,cross_prod_gray_connecting_sum)
+        k2 = k2_fixed+ np.dot(cross_product_connecting_vectors,g3_voxel_coords.T) 
+       #print(k2.shape)
+        k1_fixed=np.dot(v3, cross_product_gray_inplane_vectors)
+        k1 = k1_fixed + np.dot(cross_prod_gray_connecting_sum,g3_voxel_coords.T)       
+        
         all_depths=np.zeros(len(voxel_coords))
-        for k, voxel_coord in enumerate(voxel_coords):
-            k2 = (np.dot(v3,cross_prod_gray_connecting_sum)+
-             np.dot(cross_product_connecting_vectors,g3-voxel_coord))
-            k1 = (np.dot(v3, cross_product_gray_inplane_vectors) +
-             np.dot(cross_prod_gray_connecting_sum,g3-voxel_coord))
-            k0 = (np.dot(cross_product_gray_inplane_vectors,g3-voxel_coord))
-            depths = np.roots([k3,k2,k1,k0])
-            depths = np.round(depths[np.isreal(depths)],decimals=decimals)
+        k0 = np.dot(cross_product_gray_inplane_vectors,g3_voxel_coords.T)
+        
+        for k, voxel_coord in enumerate(voxel_coords):          
+       #     g3_voxel_coord = g3-voxel_coord
+       #     k2 = k2_fixed+ np.dot(cross_product_connecting_vectors,g3_voxel_coord)
+       #     k1 = k1_fixed + np.dot(cross_prod_gray_connecting_sum,g3_voxel_coord)
+       #     k0 = np.dot(cross_product_gray_inplane_vectors,g3_voxel_coord)
+            depths = np.roots([k3,k2[k],k1[k],k0[k]])
+            #TODO getting complex warning. Should not be happening
+            are_real = np.isreal(depths)
+            depths = np.round(np.real(depths[are_real]),decimals=decimals)
             depths = depths[np.logical_and(depths>=0,depths<=1.0)]
             if len(depths)==0:
                 all_depths[k]=float('NaN')
             else:
                 all_depths[k]=depths[0]
+
+        
         return all_depths
 
     @staticmethod
@@ -291,6 +433,23 @@ class SurfaceVolumeMapper(object):
         lambda3 = 1 - chi - eta
         return lambda1, lambda2, lambda3
     
+    def barycentric_coordinates_matrix(p,tri):
+    #solve to return coordinates as barycentric from 3 vertices of triangle.
+        #Use outputs for linear interpolation
+        a = (np.square(tri[:,0,0]-tri[:,2,0]) + np.square(tri[:,0,1]-tri[:,2,1]) + np.square(tri[:,0,2]-tri[:,2,2]))
+        b = (tri[:,1,0]-tri[:,2,0])*(tri[:,0,0]-tri[:,2,0]) + (tri[:,1,1]-tri[:,2,1])*(tri[:,0,1]-tri[:,2,1]) + (tri[:,1,2]-tri[:,2,2])*(tri[:,0,2]-tri[:,2,2])
+        c = b
+        d = (np.square(tri[:,1,0]-tri[:,2,0]) + np.square(tri[:,1,1]-tri[:,2,1]) + np.square(tri[:,1,2]-tri[:,2,2]))
+        f = (p[:,0] - tri[:,2,0])*(tri[:,0,0]-tri[:,2,0]) + (p[:,1]-tri[:,2,1])*(tri[:,0,1]-tri[:,2,1]) + (p[:,2]-tri[:,2,2])*(tri[:,0,2]-tri[:,2,2])
+        g = (p[:,0] - tri[:,2,0])*(tri[:,1,0]-tri[:,2,0]) + (p[:,1]-tri[:,2,1])*(tri[:,1,1]-tri[:,2,1]) + (p[:,2]-tri[:,2,2])*(tri[:,1,2]-tri[:,2,2])
+        chi = (d*f - b*g)/(a*d - b*c)
+        eta = (-c*f + a*g)/(a*d - b*c)
+        lambda1 = chi
+        lambda2 = eta
+        lambda3 = 1 - chi - eta
+        return np.vstack((lambda1, lambda2, lambda3)).T
+   
+    
     @staticmethod
     def get_depth_and_barycentric_coordinates_for_prism(world_coords,voxel_coords,prism):
         """calculate the precise depth and barycentric coordinates within a prism
@@ -305,8 +464,9 @@ class SurfaceVolumeMapper(object):
         #calculate barycentric coordinates for remaining voxels
         vector=prism['w_triangle']-prism['g_triangle']
         barycentric_coords = np.zeros((len(depths),3))
-        for k, (world_coord, depth) in enumerate(zip(world_coords,depths)):
-            barycentric_coords[k] = SurfaceVolumeMapper.barycentric_coordinates(world_coord, depth*vector +prism['g_triangle'])
+        #for k, (world_coord, depth) in enumerate(zip(world_coords,depths)):
+        #    barycentric_coords[k] = SurfaceVolumeMapper.barycentric_coordinates(world_coord, depth*vector +prism['g_triangle'])
+        barycentric_coords = SurfaceVolumeMapper.barycentric_coordinates_matrix(world_coords, vector*np.tile(depths,(3,3,1)).T +np.tile(prism['g_triangle'],(len(depths),1,1)))
         #filter out coordinates outside of triangle
         exclude=np.logical_or(np.any(barycentric_coords<0,axis=1),np.any(barycentric_coords>1,axis=1))
         world_coords = world_coords[~exclude]

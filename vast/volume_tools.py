@@ -60,11 +60,11 @@ def generate_block_for_area(hdf5_filenames, output_dir, area_label, area_index, 
     out_vol.writeFile()    
     return
 
-def save_mnc_block(block,block_filename,origin,resolution,dtype="byte", dimnames=("xspace", "yspace", "zspace")):
+def save_mnc_block(block_filename,block,origin=(0,0,0),resolution=(1,1,1),dtype="ubyte", dimnames=("xspace", "yspace", "zspace")):
     """save block to volumetric filename with correct resolution etc
         currently only supports minc, could be extended"""
     
-    out_vol = pyminc.volumeFromData(block_filename, block, dimnames=dimnames, starts=tuple(origin), steps=resolution, volumeType=dtype)
+    out_vol = pyminc.volumeFromData(block_filename, block, dimnames=dimnames, starts=tuple(origin), steps=tuple(resolution), volumeType=dtype)
     out_vol.writeFile()    
     return
 

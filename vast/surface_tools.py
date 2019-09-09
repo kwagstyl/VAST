@@ -288,6 +288,7 @@ def get_windows(surfname):
     #   \/_\/
     neighbours = get_neighbours(surfname)
     windows=np.zeros((len(neighbours),19),dtype='int')
+    print(len(neighbours))
     for k in range(len(neighbours)):
         central=[k]
         inner_ring=neighbours[k]
@@ -303,7 +304,8 @@ def get_windows(surfname):
         while len(outer_ring) < 12:
             counter += 1
             outer_ring.append(outer_ring[counter])
-        windows[k,:] = outer_ring[:7][::-1]+inner_ring[:3][::-1]+ central + inner_ring[3:] + outer_ring[7:]
+            
+        windows[k,:] = outer_ring[:6][::-1]+inner_ring[:3][::-1] + central + inner_ring[3:] + outer_ring[6:]
     return windows
 
 
