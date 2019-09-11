@@ -7,6 +7,7 @@ import vast.surface_tools as st
 from functools import partial
 import concurrent.futures
 import os
+import vast.math_helpers as mh
 
 import time
 class SurfaceVolumeMapper(object):
@@ -78,7 +79,9 @@ class SurfaceVolumeMapper(object):
         if mask is not None:
             self.mask=mask
             self.triangles_to_include = self.surface_mask_triangles(self.mask)
-            if type(dimensions) is not np.ndarray or type(origin) is not np.ndarray:
+            if np.logical_and(type(dimensions) is not np.ndarray,type(dimensions )is not list) or np.logical_and(type(origin) is not np.ndarray,
+                                                                                                        type(origin) is not list):
+                          
                 
                 block_box = SurfaceVolumeMapper.bounding_box(np.vstack((self.gray_surface['coords'][mask],
                                                                         self.white_surface['coords'][mask])))
@@ -92,10 +95,13 @@ class SurfaceVolumeMapper(object):
         else:
             self.dimensions = np.array(dimensions)
             self.origin = np.array(origin)
-
         
+        print(self.dimensions, self.resolution)
+        self.max_dimension = self.origin + self.dimensions * self.resolution
+        print('Number of triangles in surface mask: {}'.format(len(self.triangles_to_include)))
+        #return
         self.triangles_to_include = self.volume_mask_triangles(self.triangles_to_include)
-        
+        print('Number of triangles after masking to volume block: {}'.format(len(self.triangles_to_include)))
         
         #main function
         print('calculating coordinates')
@@ -196,26 +202,23 @@ class SurfaceVolumeMapper(object):
         
     def surface_mask_triangles(self, mask):
             """return triangles with all vertices in mask only"""
-            return self.triangles_to_include[np.all(mask[self.triangles_to_include],axis=1)]
+           
+            return self.triangles_to_include[np.any(mask[self.triangles_to_include],axis=1)]
             
     def volume_mask_triangles(self, triangles_to_include):
             """return triangles with all vertices in block only"""
             vertex_indices = np.unique(triangles_to_include)
-#           TODO this doesnt work for 2D because neither triangle is in the slice unless perfectly perpendicular
-            #add a margin for edge cases. 4 mm in any direction            
-            margin = 4.0
-            max_dimension = self.origin + self.dimensions * self.resolution
-            origin_expanded = self.origin - np.array([margin,margin,margin])
-            max_dimension_expanded = max_dimension + np.array([margin,margin,margin])
-            #check if vertices inside block
-            g_include=np.logical_and(np.all(self.gray_surface['coords'][vertex_indices] > origin_expanded,axis=1),
-                           np.all(self.gray_surface['coords'][vertex_indices] < max_dimension_expanded,axis=1))
-            w_include=np.logical_and(np.all(self.white_surface['coords'][vertex_indices] > origin_expanded,axis=1),
-                           np.all(self.white_surface['coords'][vertex_indices] < max_dimension_expanded,axis=1))
+            #check if vertices inside block.+1 if above max, -1 if below origin
+            g_include=(self.gray_surface['coords'][vertex_indices] > self.max_dimension).astype(int) - (self.gray_surface['coords'][vertex_indices] < self.origin).astype(int)
+            w_include=(self.white_surface['coords'][vertex_indices] > self.max_dimension).astype(int) - (self.white_surface['coords'][vertex_indices] < self.origin).astype(int)
+            #exclude if both are either 1 or -1, so if multiplied +1.
+            exclude=np.any((g_include*w_include)==1,axis=1)
+            
             #include if either grey or white is inside
-            surface_mask_indices = vertex_indices[np.logical_or(g_include,w_include)]
+            surface_mask_indices = vertex_indices[np.logical_not(exclude)]
             surface_mask=np.zeros(len(self.gray_surface['coords'])).astype(bool)
             surface_mask[surface_mask_indices] = True
+            np.all(surface_mask[self.triangles_to_include],axis=1)
             #mask triangles
             return self.surface_mask_triangles(surface_mask)
         
@@ -357,6 +360,8 @@ class SurfaceVolumeMapper(object):
         voxel_coordinates = np.reshape(voxel_coordinates,(voxel_coordinates.size//3,3))
         #convert to world coordinates
         world_coordinates=origin_offset+voxel_coordinates*voxel_resolution
+        #mask out those not in block to speed up calculations on slices
+        
         return world_coordinates, voxel_coordinates.astype(int)
     
     @staticmethod
@@ -395,16 +400,19 @@ class SurfaceVolumeMapper(object):
         k1_fixed=np.dot(v3, cross_product_gray_inplane_vectors)
         k1 = k1_fixed + np.dot(cross_prod_gray_connecting_sum,g3_voxel_coords.T)       
         
-        all_depths=np.zeros(len(voxel_coords))
-        k0 = np.dot(cross_product_gray_inplane_vectors,g3_voxel_coords.T)
         
+        k0 = np.dot(cross_product_gray_inplane_vectors,g3_voxel_coords.T)
+        ## TODO adapt real cubic solve so that the outputs work and match solve.
+       # all_depths_c = mh.real_cubic_solve(k3, k2,k1,k0)
+       # all_depths_c[np.logical_or(all_depths_c<0,all_depths_c>1)]=float('NaN')
+        
+        
+        all_depths=np.zeros(len(voxel_coords))
         for k, voxel_coord in enumerate(voxel_coords):          
-       #     g3_voxel_coord = g3-voxel_coord
-       #     k2 = k2_fixed+ np.dot(cross_product_connecting_vectors,g3_voxel_coord)
-       #     k1 = k1_fixed + np.dot(cross_prod_gray_connecting_sum,g3_voxel_coord)
-       #     k0 = np.dot(cross_product_gray_inplane_vectors,g3_voxel_coord)
-            depths = np.roots([k3,k2[k],k1[k],k0[k]])
-            #TODO getting complex warning. Should not be happening
+            #TODO replace with matrix roots function
+
+            #depths = np.roots([k3,k2[k],k1[k],k0[k]])
+            depths = mh.solve(k3, k2[k], k1[k], k0[k])
             are_real = np.isreal(depths)
             depths = np.round(np.real(depths[are_real]),decimals=decimals)
             depths = depths[np.logical_and(depths>=0,depths<=1.0)]
@@ -413,7 +421,7 @@ class SurfaceVolumeMapper(object):
             else:
                 all_depths[k]=depths[0]
 
-        
+        #print(np.vstack((all_depths_c,all_depths)))
         return all_depths
 
     @staticmethod
@@ -475,6 +483,8 @@ class SurfaceVolumeMapper(object):
         barycentric_coords=barycentric_coords[~exclude]
         return world_coords, voxel_coords, depths, barycentric_coords
 
+
+    
 
     
 

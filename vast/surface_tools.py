@@ -154,14 +154,31 @@ def get_ring_of_neighbours(island, neighbours, vertex_indices=None, ordered=Fals
         unique_neighbours = np.setdiff1d(np.unique(unfiltered_neighbours), vertex_indices[island])
         return unique_neighbours
             
-def get_neighbouring_roi(area, neighbours,mask=None):
+def get_neighbouring_roi(area, neighbours,mask=None, scale = 1, uncertainty_zone_steps =0):
     """generate region of interest of same size as area from neighbouring vertices
-    currently no buffer zone or mask is included."""
+    currently no buffer zone or mask is included.
+    scale : size of neighbouring area relative to roi. 1 means number of vertices = roi
+    uncertainty_zone_steps : int, number of vertex steps to take when expanding ring.
+    """
     roi=area.astype(bool)
     mask=mask.astype(bool)
-    n_vert_in_roi = np.sum(roi)
-    neighbouring_roi=[0]
-    while len(neighbouring_roi) < n_vert_in_roi:
+    target_number_of_vertices = np.round(np.sum(roi) *scale).astype(int)
+    bool_uncertainty = np.zeros_like(roi)
+    if uncertainty_zone_steps:
+        uncertainty_zone_verts = []
+        for k in range(uncertainty_zone_steps):
+            ring_vertices = get_ring_of_neighbours(roi, neighbours)
+            #alter roi so that neighbouring ring extends from outside the uncertainty zone
+            roi[ring_vertices] = True
+            uncertainty_zone_verts.extend(ring_vertices)
+            if mask is not None:
+                uncertainty_zone_verts=np.array(uncertainty_zone_verts)
+                uncertainty_zone_verts=uncertainty_zone_verts[~mask[uncertainty_zone_verts]].tolist()
+        bool_uncertainty[uncertainty_zone_verts]= True
+    
+    neighbouring_roi=[]
+    #ring of uncertainty, to allow for inexact borders to be adjusted.
+    while len(neighbouring_roi) < target_number_of_vertices:
         ring_vertices = get_ring_of_neighbours(roi, neighbours)
         #extend region of interest to get next neighbours in subsequent loop
         roi[ring_vertices] = True
@@ -170,14 +187,13 @@ def get_neighbouring_roi(area, neighbours,mask=None):
         #mask vertices that you want to exclude eg medial wall. 
         if mask is not None:
             neighbouring_roi=np.array(neighbouring_roi)
-            
             neighbouring_roi=neighbouring_roi[~mask[neighbouring_roi]].tolist()
             
     #shrink to correct length, equal to original roi
-    neighbouring_roi = neighbouring_roi[:n_vert_in_roi]
+    neighbouring_roi = neighbouring_roi[:target_number_of_vertices]
     bool_roi = np.zeros_like(roi)
     bool_roi[neighbouring_roi]= True
-    return bool_roi
+    return bool_roi, bool_uncertainty
 
 
 def load_printed_intensities(intensity_file):
