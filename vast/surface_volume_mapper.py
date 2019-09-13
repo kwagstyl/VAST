@@ -96,7 +96,7 @@ class SurfaceVolumeMapper(object):
             self.dimensions = np.array(dimensions)
             self.origin = np.array(origin)
         
-        print(self.dimensions, self.resolution)
+        print(self.dimensions, self.resolution, self.origin)
         self.max_dimension = self.origin + self.dimensions * self.resolution
         print('Number of triangles in surface mask: {}'.format(len(self.triangles_to_include)))
         #return
