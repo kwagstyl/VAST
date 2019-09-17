@@ -91,6 +91,8 @@ class SectionPlotter():
         """Flipping images according to axis"""
         if self.axis=='y':
             return np.flipud(array_data)
+        elif self.axis=='z':
+            return np.rot90(array_data)
 
     def import_results_mncfile(self, filename):
         """load locally generated mnc file
@@ -107,6 +109,8 @@ class SectionPlotter():
         """Flipping images according to axis"""
         if self.axis=='y':
             return np.rot90(array_data)
+        elif self.axis=='z':
+            return np.flipud(array_data)
         
     def filter_zeros(self,array_data):
         """set zeros to nan for transparent"""
@@ -152,7 +156,7 @@ class SectionPlotter():
     def get_axis_info(self):
         """Get string and index describing axis"""
         axes=['x','y','z']
-        axis_strings=['Axial','Coronal','Sagittal']
+        axis_strings=['Sagittal','Coronal','Axial']
         self.axis_index=axes.index(self.axis)
         self.axis_str = axis_strings[self.axis_index]
 
@@ -173,7 +177,7 @@ class SectionPlotter():
         if crop:
             all_images = self.autocrop_to_mask(all_images, all_images['labels'])
 
-        colourmaps=['Greys_r','rainbow','viridis','viridis','magma','magma']
+        colourmaps=['viridis_r','rainbow','viridis','viridis','viridis','viridis']
         #if not specified, arbitary order
         if image_keys is None:
             image_keys=list(all_images.keys())
@@ -184,8 +188,10 @@ class SectionPlotter():
             else:
                 axes[sal] = plt.subplot(3,2,i+1)
             axes[sal].set_title(sal)
+            vmin=np.quantile(all_images[sal][all_images[sal]>0],.001)
+            vmax=np.quantile(all_images[sal][all_images[sal]>0],.999)
             axes[sal].imshow(all_images[sal], cmap=colourmaps[i],
-                             vmin=np.min(all_images[sal][all_images[sal]>0])-0.5, vmax=np.max(all_images[sal]))
+                             vmin=vmin, vmax=vmax)
             axes[sal].axis('off')
         plt.tight_layout()
         return a
