@@ -33,7 +33,7 @@ class SectionPlotter():
     def expand_indexed_profiles(self,indices,profiles):
         """Given a set of profiles indices and matching profiles, expand the profiles to be a matrix of profiles
         with zeros in the gaps"""
-        profiles_full = np.zeros((np.max(indices)+1,np.shape(profiles)[1]))
+        profiles_full = np.zeros((655362,np.shape(profiles)[1]))
         profiles_full[indices]=profiles
         return profiles_full
         
@@ -168,8 +168,12 @@ class SectionPlotter():
     def autocrop_to_mask(self, all_images,mask, thr=0):
         """takes a set of images and crops each to the mask"""
         mask = mask>thr
+        rows = np.any(mask, axis=1)
+        cols = np.any(mask, axis=0)
+        rmin, rmax = np.where(rows)[0][[0, -1]]
+        cmin, cmax = np.where(cols)[0][[0, -1]]
         for image in all_images.keys():
-            all_images[image]= all_images[image][np.ix_(mask.any(1),mask.any(0))]
+            all_images[image]= all_images[image][rmin:rmax,cmin:cmax]
         return all_images
 
     def plot_images_grid(self, all_images, image_keys=None,labels=False, crop=True):
@@ -177,40 +181,36 @@ class SectionPlotter():
         if crop:
             all_images = self.autocrop_to_mask(all_images, all_images['labels'])
 
-        colourmaps=['viridis_r','rainbow','viridis','viridis','viridis','viridis']
+        colourmaps=['viridis_r','rainbow','viridis','viridis','viridis','viridis','viridis','viridis','viridis']
         #if not specified, arbitary order
         if image_keys is None:
             image_keys=list(all_images.keys())
         a=plt.figure(figsize=(10,10))
         for i, sal in enumerate(image_keys):
             if i>0:
-                axes[sal] = plt.subplot(3,2,i+1, sharex=axes[image_keys[0]],sharey=axes[image_keys[0]])
+                axes[sal] = plt.subplot(3,3,i+1, sharex=axes[image_keys[0]],sharey=axes[image_keys[0]])
             else:
-                axes[sal] = plt.subplot(3,2,i+1)
+                axes[sal] = plt.subplot(3,3,i+1)
             axes[sal].set_title(sal)
-            vmin=np.quantile(all_images[sal][all_images[sal]>0],.001)
-            vmax=np.quantile(all_images[sal][all_images[sal]>0],.999)
-            axes[sal].imshow(all_images[sal], cmap=colourmaps[i],
+            if 'diff' in sal:
+                vmin = np.quantile(all_images[sal][all_images[sal]>0],.01)
+                vmax = np.quantile(all_images[sal][all_images[sal]>0],.99)
+                limits = np.max([np.abs(vmin),np.abs(vmax)])
+                axes[sal].imshow(all_images[sal], cmap='RdBu',vmin=-limits,vmax=limits)
+            elif 'labels' in sal or 'predictions' in sal:
+                vmin=0.1
+                vmax=3
+                axes[sal].imshow(all_images[sal], cmap='rainbow',
+                             vmin=vmin, vmax=vmax)
+            else:
+                vmin=np.quantile(all_images[sal][all_images[sal]>0],.001)
+                vmax=np.quantile(all_images[sal][all_images[sal]>0],.999)
+                axes[sal].imshow(all_images[sal], cmap=colourmaps[i],
                              vmin=vmin, vmax=vmax)
             axes[sal].axis('off')
         plt.tight_layout()
         return a
 
-#     def generate_all_saliency_images_per_hemisphere(self, experiment_folder,  saliency_labels, test_hemisphere, coordinates_filename):
-#         """generate an image for a list of saliency or histology images for a given hemisphere,
-#         at the section of interest"""
-#         images={}
-#         print(experiment_folder)
-#         for sal_type in saliency_labels:
-#             if sal_type == 'histology':
-#                 #get histology from bigbrain ftp
-#                 images[sal_type]=self.import_histology(os.path.join(experiment_folder,'histology.mnc'))
-#             else:
-#                 #load or create mnc file
-#                 images[sal_type]=self.generate_results_mncfile(os.path.join(experiment_folder,'{}_saliency_{}.mnc'.format(sal_type,hemisphere)),
-#                                                     experiment_folder =experiment_folder, 
-#                                                      coordinates_filename=coordinates_filename, 
-#                                                      test_hemisphere=test_hemisphere ,
-#                                                                              sal_type=sal_type  )
-            
-#         return images
+
+
+
