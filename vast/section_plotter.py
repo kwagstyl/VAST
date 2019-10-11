@@ -1,7 +1,7 @@
 import numpy as np
-import wget
+#import wget
 import os
-import pyminc.volumes.factory as pyminc
+#import pyminc.volumes.factory as pyminc
 from vast.surface_volume_mapper import SurfaceVolumeMapper  as svm
 import matplotlib.pyplot as plt
 
@@ -80,6 +80,7 @@ class SectionPlotter():
         return array_data
     
     def download_histology(self, filename):
+        import wget
         """download histological section from the BigBrain ftp"""
         url = 'ftp://bigbrain.loris.ca/BigBrainRelease.2015/2D_Final_Sections/{}/Minc/pm{:04d}o.mnc'.format(
             self.axis_str,self.section_number)
@@ -119,6 +120,7 @@ class SectionPlotter():
 
     def load_2D_mnc(self,filename):
         """loads and squeezes a 2D mncfile"""
+        import pyminc.volumes.factory as pyminc
         mncfile=pyminc.volumeFromFile(filename)
         array_data = np.squeeze(np.array(mncfile.data))
         return array_data
