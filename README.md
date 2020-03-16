@@ -9,3 +9,5 @@ pyminc https://github.com/Mouse-Imaging-Centre/pyminc
 
 By Konrad Wagstyl and Hannah Spitzer
 
+To install run:
+python setup.py install
