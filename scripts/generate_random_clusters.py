@@ -84,21 +84,22 @@ if __name__ == "__main__":
 
     for cluster_index in cluster_indices:
         n_clusters=100
-        cluster_area=np.sum(areas[clusters==cluster_index])
+        #cluster_area=np.sum(areas[clusters==cluster_index])
 
         for cluster in np.arange(n_clusters):
             if cluster==0:
               #  random_cluster_matrix[cluster,clusters==cluster_index]=1
                 random_cluster_lists=[list(np.where(clusters==cluster_index)[0])]
+                base_cluster_length=np.sum(clusters==cluster_index)
             else:
                 seed_vertex = np.random.choice(cortical_vertices)
                 random_cluster_area=0
                 old_cluster=neighbours[seed_vertex]
-                while cluster_area > random_cluster_area:
+                while base_cluster_length > len(new_cluster):
                     new_cluster = st.f7(flatten(neighbours[old_cluster]))
-                    random_cluster_area = np.sum(areas[new_cluster])
+                    #random_cluster_area = np.sum(areas[new_cluster])
                     old_cluster=new_cluster
-                random_cluster_lists.append(new_cluster)
+                random_cluster_lists.append(new_cluster[:base_cluster_length])
 
         with open(os.path.join(subject_id,'surf','random_clusters_{}.csv'.format(cluster_index)),'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
