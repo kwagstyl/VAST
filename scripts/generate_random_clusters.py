@@ -1,3 +1,8 @@
+
+
+import sys
+sys.path.insert(0,'/Users/aswinchari/Documents/GitHub/vast')
+
 import vast.io_mesh as io
 import vast.surface_tools as st
 import numpy as np
@@ -6,11 +11,10 @@ import csv
 import argparse
 import os
 
-
 flatten = lambda l: [item for sublist in l for item in sublist]
 #load in data
 
-def main(args)
+def main(args):
 
     neighbours=st.get_neighbours(args.combined_surface)
     lh_cluster=nb.load(args.left_clusters)
@@ -27,17 +31,21 @@ def main(args)
     cortical_vertices = np.hstack((lh_cortex,rh_cortex))
 
     #get clusters (add max left )
-    clusters= np.hstack((lh_cluster, rh_cluster+np.max(lh_cluster)))
-    cluster_indices=np.unique(np.round(clusters))
+    rh_cluster[rh_cluster>0]+=np.max(lh_cluster)
+    clusters= np.hstack((lh_cluster, rh_cluster))
+    cluster_indices=np.unique(np.round(clusters))[1:]
 
     areas = np.hstack((lh_area,rh_area))
     n_vertices=len(neighbours)
 
     for cluster_index in cluster_indices:
+        print(cluster_index)
         n_clusters=100
+        print(np.sum(clusters==cluster_index))
         cluster_area=np.sum(areas[clusters==cluster_index])
 
         for cluster in np.arange(n_clusters):
+
             if cluster==0:
               #  random_cluster_matrix[cluster,clusters==cluster_index]=1
                 random_cluster_lists=[list(np.where(clusters==cluster_index)[0])]
@@ -51,7 +59,7 @@ def main(args)
                     old_cluster=new_cluster
                 random_cluster_lists.append(new_cluster)
 
-        with open(os.path.join(subject_id,'surf','random_clusters_{}.csv'.format(cluster_index)),'w', newline='') as csvfile:
+        with open(os.path.join(args.subject_id,'surf','random_clusters_{}.csv'.format(cluster_index)),'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerows(random_cluster_lists)
             
