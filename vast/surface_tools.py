@@ -267,7 +267,7 @@ def closest_node(node, nodes):
 def get_nearest_indices(surf1,surf2):
     """find nearest indices in surf2 for each vertex in surf1"""
     ListIndices=np.arange(len(surf2))
-    RealIndices=np.zeros(len(surf1))
+    RealIndices=np.zeros(len(surf1)).astype(int)
     checkdist=0.6
     for k, coord in enumerate(surf1):
         #reduce search to only nearby coordinates
@@ -350,3 +350,35 @@ def ordered_new_neighbours(patch, neighbourhood):
         else :
             if n in patch:
                 switch1=True
+
+def expand_to_fill(overlay,neighbours,n_steps=10):
+    """fill out values on surface"""
+    new_overlay=overlay.copy()
+    to_fill=overlay==0
+    filled=overlay!=0
+    steps=0
+    to_fill_neighbours=neighbours[filled]
+    while np.sum(to_fill)>0:
+        old_overlay=new_overlay.copy()
+        steps+=1
+        if steps >=n_steps:
+            break
+        filled_vertices=np.where(filled)[0]
+        to_fill_neighbours=neighbours[filled]
+        for k,n in enumerate(to_fill_neighbours):
+            n=np.array(n)
+            if np.sum(to_fill[n]==1)>0:
+                #This line is not very clever. Replaces with first neighbour
+                #better would be most common nonzero neighbour
+#                for vert in n[to_fill[n]==1]:
+ #                   new_overlay(np.array(neighbours[vert]))
+                new_overlay[n[to_fill[n]==1]]=new_overlay[filled_vertices[k]]
+        
+            to_fill=new_overlay==0
+#        to_fill_neighbours=neighbours[new_overlay!=old_overlay]
+        filled=new_overlay!=0
+    return new_overlay
+
+
+
+    
